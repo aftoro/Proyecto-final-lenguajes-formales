@@ -1,4 +1,3 @@
-# Proyecto-final-lenguajes-formales
 # LL(1) and SLR(1) Parser
 
 This project implements **LL(1)** and **SLR(1)** parsers with the following capabilities:
@@ -23,9 +22,11 @@ This project implements **LL(1)** and **SLR(1)** parsers with the following capa
 
 ## General Usage
 
-1. Run the main Python file.
-2. Enter a grammar using the following format:
+1. Install tabulate using pip install tabulate
+2. Run the main Python file.
+3. Enter a grammar using the following format:
    - Each production should start with the non-terminal, followed by `->`, and the alternatives separated by `|`.
    - Symbols must be separated by spaces.
    - Epsilon (empty production) is represented by the symbol `ε`.
-   
+
+
