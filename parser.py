@@ -1,662 +1,594 @@
-# Importación de librerías necesarias
-import sys  # Para manejo de sistema y entrada/salida
-from collections import defaultdict  # Para usar diccionarios con valores por defecto
-from tabulate import tabulate  # type: ignore # Para imprimir tablas formateadas
+# Librerias Esenciales
+import sys  # Manejo del sistema
+from collections import defaultdict  # Diccionarios avanzados
+from tabulate import tabulate  # Tablas elegantes
 
-# --- Lectura de gramática ---
-def input_grammar():
-    # Lee el número de producciones de la gramática
-    n = int(input())
+# Funciones Principales
+
+def leer_gramatica():
+    """Obtiene la gramatica desde la entrada estandar"""
+    n_reglas = int(input())
     
-    # Diccionario para almacenar las producciones (no-terminal -> lista de producciones)
-    productions = defaultdict(list)
+    reglas = defaultdict(list)
+    no_terminales = []
     
-    # Lista para mantener el orden de los no-terminales
-    non_terminals = []
-    
-    # Lee cada producción
-    for _ in range(n):
-        line = input().strip()
-        if not line:  # Si la línea está vacía, continuar
+    for _ in range(n_reglas):
+        linea = input().strip()
+        if not linea:
             continue
             
-        # Divide cada producción en parte izquierda (no-terminal) y derecha
-        nt, rhs = line.split("->")
-        nt = nt.strip()  # Elimina espacios en blanco
+        lado_izq, lado_der = linea.split("->")
+        lado_izq = lado_izq.strip()
         
-        # Agrega el no-terminal a la lista si no está
-        if nt not in non_terminals:
-            non_terminals.append(nt)
+        if lado_izq not in no_terminales:
+            no_terminales.append(lado_izq)
             
-        # Procesa las alternativas de la parte derecha (separadas por espacios o |)
-        alternatives = rhs.strip().split()
+        alternativas = lado_der.strip().split()
         
-        for alt in alternatives:
-            # Divide las producciones separadas por |
+        for alt in alternativas:
             for prod in alt.split('|'):
-                # Reemplaza 'e' por ε (epsilon) y crea lista de símbolos
-                symbols = [c if c != 'e' else 'ε' for c in prod.strip()]
-                if not symbols:  # Si está vacío, es una producción epsilon
-                    symbols = ['ε']
-                # Agrega la producción al no-terminal correspondiente
-                productions[nt].append(symbols)
+                simbolos = [c if c != 'e' else 'ε' for c in prod.strip()]
+                if not simbolos:
+                    simbolos = ['ε']
+                reglas[lado_izq].append(simbolos)
                 
-    # Retorna las producciones y el primer no-terminal (símbolo inicial)
-    return productions, non_terminals[0]
+    return reglas, no_terminales[0]
 
-def get_terminals(productions):
-    # Conjunto para almacenar terminales
-    terms = set()
+def obtener_terminales(reglas):
+    """Extrae los terminales de las producciones"""
+    terminales = set()
     
-    # Recorre todas las producciones
-    for rhss in productions.values():
-        for rhs in rhss:
-            for sym in rhs:
-                # Un terminal es cualquier símbolo que no sea epsilon y no sea mayúscula
-                if sym != 'ε' and (not sym.isupper()):
-                    terms.add(sym)
+    for producciones in reglas.values():
+        for prod in producciones:
+            for simb in prod:
+                if simb != 'ε' and (not simb.isupper()):
+                    terminales.add(simb)
                     
-    # Elimina $ si está presente (símbolo de fin de cadena)
-    terms.discard('$')
-    
-    # Retorna terminales ordenados
-    return sorted(terms)
+    terminales.discard('$')
+    return sorted(terminales)
 
-# --- Análisis LL(1) ---
-class GrammarAnalyzerLL1:
-    def __init__(self, productions, start_symbol):
-        # Inicializa las estructuras básicas
-        self.productions = productions  # Diccionario de producciones
-        self.start = start_symbol  # Símbolo inicial
-        self.non_terminals = set(productions.keys())  # Conjunto de no-terminales
-        self.terminals = get_terminals(productions)  # Lista de terminales
-        self.first = self._first()  # Calcula conjuntos FIRST
-        self.follow = self._follow()  # Calcula conjuntos FOLLOW
-        self.table, self.is_ll1 = self._ll1_table()  # Construye tabla LL(1)
+# Nucleo LL(1)
 
-    def _first(self):
-        # Inicializa diccionario de conjuntos FIRST
-        first = {nt: set() for nt in self.non_terminals}
+class AnalizadorLL1:
+    def __init__(self, reglas, simbolo_inicial):
+        self.reglas = reglas
+        self.inicio = simbolo_inicial
+        self.no_terminales = set(reglas.keys())
+        self.terminales = obtener_terminales(reglas)
+        self.primeros = self._calcular_primeros()
+        self.siguientes = self._calcular_siguientes()
+        self.tabla, self.es_ll1 = self._construir_tabla()
+
+    def _calcular_primeros(self):
+        """Calcula conjuntos FIRST"""
+        primeros = {nt: set() for nt in self.no_terminales}
         
-        # FIRST de un terminal es el terminal mismo
-        for t in self.terminals:
-            first[t] = {t}
+        for t in self.terminales:
+            primeros[t] = {t}
             
-        changed = True
-        while changed:
-            changed = False
-            for nt in self.non_terminals:
-                for prod in self.productions[nt]:
-                    i, add_epsilon = 0, True
-                    # Calcula FIRST para cada símbolo en la producción
-                    while i < len(prod) and add_epsilon:
-                        sym = prod[i]
-                        f = first[sym] if sym in first else {sym}
+        cambio = True
+        while cambio:
+            cambio = False
+            for nt in self.no_terminales:
+                for prod in self.reglas[nt]:
+                    i, epsilon = 0, True
+                    while i < len(prod) and epsilon:
+                        simb = prod[i]
+                        f = primeros[simb] if simb in primeros else {simb}
                         
-                        # Guarda tamaño antes para detectar cambios
-                        before = len(first[nt])
+                        antes = len(primeros[nt])
+                        primeros[nt].update(f - {'ε'})
                         
-                        # Agrega FIRST(sym) - {ε} a FIRST(nt)
-                        first[nt].update(f - {'ε'})
-                        
-                        # Si hubo cambio, marca para continuar
-                        if len(first[nt]) != before:
-                            changed = True
+                        if len(primeros[nt]) != antes:
+                            cambio = True
                             
-                        # Si ε no está en FIRST(sym), no continuar
                         if 'ε' not in f:
-                            add_epsilon = False
+                            epsilon = False
                         i += 1
                         
-                    # Si todos los símbolos pueden derivar ε, agregar ε
-                    if add_epsilon:
-                        if 'ε' not in first[nt]:
-                            first[nt].add('ε')
-                            changed = True
-        return first
+                    if epsilon:
+                        if 'ε' not in primeros[nt]:
+                            primeros[nt].add('ε')
+                            cambio = True
+        return primeros
 
-    def _follow(self):
-        # Inicializa diccionario de conjuntos FOLLOW
-        follow = {nt: set() for nt in self.non_terminals}
+    def _calcular_siguientes(self):
+        """Calcula conjuntos FOLLOW"""
+        siguientes = {nt: set() for nt in self.no_terminales}
+        siguientes[self.inicio].add('$')
         
-        # FOLLOW del símbolo inicial contiene $
-        follow[self.start].add('$')
-        
-        changed = True
-        while changed:
-            changed = False
-            for nt in self.non_terminals:
-                for prod in self.productions[nt]:
-                    trailer = follow[nt].copy()
+        cambio = True
+        while cambio:
+            cambio = False
+            for nt in self.no_terminales:
+                for prod in self.reglas[nt]:
+                    trailer = siguientes[nt].copy()
                     
-                    # Procesa la producción de derecha a izquierda
-                    for sym in reversed(prod):
-                        if sym in self.non_terminals:
-                            before = len(follow[sym])
+                    for simb in reversed(prod):
+                        if simb in self.no_terminales:
+                            antes = len(siguientes[simb])
+                            siguientes[simb].update(trailer)
                             
-                            # Agrega trailer al FOLLOW del no-terminal
-                            follow[sym].update(trailer)
+                            if len(siguientes[simb]) != antes: 
+                                cambio = True
                             
-                            if len(follow[sym]) != before: 
-                                changed = True
-                            
-                            # Si el símbolo puede derivar ε, agrega FIRST(sym)-{ε} al trailer
-                            if 'ε' in self.first[sym]:
-                                trailer = trailer.union(self.first[sym] - {'ε'})
+                            if 'ε' in self.primeros[simb]:
+                                trailer = trailer.union(self.primeros[simb] - {'ε'})
                             else:
-                                trailer = self.first[sym] - {'ε'}
+                                trailer = self.primeros[simb] - {'ε'}
                         else:
-                            # Para terminales, el trailer es el terminal mismo
-                            trailer = {sym}
-        return follow
+                            trailer = {simb}
+        return siguientes
 
-    def _ll1_table(self):
-        table = {}  # Tabla de análisis LL(1)
-        is_ll1 = True  # Bandera para gramática LL(1)
+    def _construir_tabla(self):
+        """Construye tabla de analisis LL(1)"""
+        tabla = {}
+        es_valida = True
         
-        for nt in self.non_terminals:
-            for prod in self.productions[nt]:
-                first_set = set()
-                i, all_epsilon = 0, True
+        for nt in self.no_terminales:
+            for prod in self.reglas[nt]:
+                primeros_prod = set()
+                i, todo_epsilon = 0, True
                 
-                # Calcula FIRST de la producción
-                while i < len(prod) and all_epsilon:
-                    sym = prod[i]
-                    f = self.first[sym] if sym in self.first else {sym}
-                    first_set |= (f - {'ε'})
+                while i < len(prod) and todo_epsilon:
+                    simb = prod[i]
+                    f = self.primeros[simb] if simb in self.primeros else {simb}
+                    primeros_prod |= (f - {'ε'})
                     
-                    # Si un símbolo no deriva ε, termina
                     if 'ε' not in f: 
-                        all_epsilon = False
+                        todo_epsilon = False
                     i += 1
                 
-                # Para cada terminal en FIRST, agrega a la tabla
-                for t in first_set:
-                    if (nt, t) in table:  # Conflicto: no es LL(1)
-                        is_ll1 = False
-                    table[(nt, t)] = prod
+                for t in primeros_prod:
+                    if (nt, t) in tabla:
+                        es_valida = False
+                    tabla[(nt, t)] = prod
                 
-                # Si toda la producción deriva ε, usa FOLLOW
-                if all_epsilon:
-                    for t in self.follow[nt]:
-                        if (nt, t) in table:  # Conflicto: no es LL(1)
-                            is_ll1 = False
-                        table[(nt, t)] = prod
-        return table, is_ll1
+                if todo_epsilon:
+                    for t in self.siguientes[nt]:
+                        if (nt, t) in tabla:
+                            es_valida = False
+                        tabla[(nt, t)] = prod
+        return tabla, es_valida
 
-    def parse(self, inp):
-        # Verifica que la cadena no contenga ε explícito
-        if 'ε' in inp:
-            print("Error: la cadena de entrada no debe contener 'ε'. Use una cadena vacía si corresponde.")
+    def analizar(self, entrada):
+        """Realiza analisis sintactico LL(1)"""
+        if 'ε' in entrada:
+            print("Error: 'ε' no permitido en entrada")
             return False
 
-        # Prepara la cadena de entrada (añade $ al final)
-        tokens = list(inp.strip()) + ['$']
-        
-        # Inicializa pila con $ y símbolo inicial
-        stack = ['$', self.start]
-        i = 0  # Índice para recorrer la entrada
-        
-        # Estructuras para guardar información del análisis
-        sequence = []  # Secuencia de producciones aplicadas
-        trace = []     # Traza de pasos del análisis
+        tokens = list(entrada.strip()) + ['$']
+        pila = ['$', self.inicio]
+        i = 0
+        secuencia = []
+        traza = []
 
-        # Encabezado para la traza
-        print(f"\n{'Paso':<4} {'Pila':<20} {'Entrada':<20} {'Producción'}")
-        paso = 1  # Contador de pasos
+        print(f"\n{'Paso':<4} {'Pila':<20} {'Entrada':<20} {'Produccion'}")
+        paso = 1
 
-        while stack:
-            # Prepara strings para mostrar estado actual
-            pila_str = ' '.join(reversed(stack))
+        while pila:
+            pila_str = ' '.join(reversed(pila))
             entrada_str = ''.join(tokens[i:])
-            top = stack.pop()  # Saca elemento de la pila
-            cur = tokens[i]    # Símbolo actual de entrada
-            prod_str = "-"      # Producción aplicada (inicialmente ninguna)
+            tope = pila.pop()
+            actual = tokens[i]
+            prod_str = "-"
 
-            if top == cur:  # Coincidencia de terminales
-                trace.append((paso, pila_str, entrada_str, prod_str))
+            if tope == actual:
+                traza.append((paso, pila_str, entrada_str, prod_str))
                 print(f"{paso:<4} {pila_str:<20} {entrada_str:<20} {prod_str}")
                 i += 1
-                if top == '$':  # Fin del análisis
+                if tope == '$':
                     break
                     
-            elif top in self.non_terminals:  # No-terminal en la pila
-                # Busca producción en la tabla
-                prod = self.table.get((top, cur))
+            elif tope in self.no_terminales:
+                prod = self.tabla.get((tope, actual))
                 
-                if not prod:  # No hay producción válida
-                    print(f"Error: No se encontró entrada en la tabla para ({top}, {cur})")
+                if not prod:
+                    print(f"Error: No hay produccion para ({tope}, {actual})")
                     print(f"Pila: {pila_str}  Entrada: {entrada_str}")
                     return False
                 
-                # Guarda la producción aplicada
-                sequence.append((top, prod))
-                prod_str = f"{top} → {' '.join(prod)}"
-                trace.append((paso, pila_str, entrada_str, prod_str))
+                secuencia.append((tope, prod))
+                prod_str = f"{tope} -> {' '.join(prod)}"
+                traza.append((paso, pila_str, entrada_str, prod_str))
                 print(f"{paso:<4} {pila_str:<20} {entrada_str:<20} {prod_str}")
                 
-                # Si no es producción epsilon, pone símbolos en pila en orden inverso
                 if prod != ['ε']:
-                    for sym in reversed(prod):
-                        stack.append(sym)
+                    for simb in reversed(prod):
+                        pila.append(simb)
                         
-            else:  # Error: terminal en pila no coincide con entrada
-                print(f"Error: símbolo en pila '{top}' no coincide con entrada '{cur}'")
+            else:
+                print(f"Error: '{tope}' no coincide con '{actual}'")
                 print(f"Pila: {pila_str}  Entrada: {entrada_str}")
                 return False
                 
-            paso += 1  # Incrementa contador de pasos
+            paso += 1
 
-        # Verifica condiciones de aceptación
-        pila_final = (stack == [])
-        entrada_final = (i == len(tokens))
-        
-        if pila_final and i == len(tokens):
-            print("\nLa cadena pertenece al lenguaje.")
-            print("\nSecuencia de producción utilizada:")
-            for nt, prod in sequence:
-                print(f"{nt} → {' '.join(prod)}")
+        if (not pila and i == len(tokens)) or (not pila and i == len(tokens)-1 and tokens[i-1] == '$'):
+            print("\nCadena valida")
+            print("\nProducciones aplicadas:")
+            for nt, prod in secuencia:
+                print(f"{nt} -> {' '.join(prod)}")
             return True
-            
-        elif pila_final and i == len(tokens)-1 and tokens[i-1] == '$':
-            print("\nLa cadena pertenece al lenguaje.")
-            print("\nSecuencia de producción utilizada:")
-            for nt, prod in sequence:
-                print(f"{nt} → {' '.join(prod)}")
-            return True
-            
         else:
-            print("Error: la cadena no fue completamente consumida o la pila no está vacía.")
+            print("Error: analisis incompleto")
             return False
 
-    # ---------- Métodos para imprimir tablas ----------
-    def print_productions(self):
-        print("\n[Producciones]")
-        for nt in sorted(self.non_terminals):
+    # Metodos de visualizacion
+    def mostrar_producciones(self):
+        print("\n[PRODUCCIONES]")
+        for nt in sorted(self.no_terminales):
             prods = []
-            for prod in self.productions[nt]:
-                # Formatea producción (epsilon si es vacía)
+            for prod in self.reglas[nt]:
                 prods.append(' '.join(prod) if prod != ['ε'] else "ε")
-            print(f"{nt} → " + ' | '.join(prods))
+            print(f"{nt} -> " + ' | '.join(prods))
 
-    def print_first_follow(self):
-        print("\n[FIRST]")
-        for nt in sorted(self.non_terminals):
-            print(f"FIRST({nt}): " + '{' + ', '.join(sorted(self.first[nt])) + '}')
+    def mostrar_primeros_siguientes(self):
+        print("\n[PRIMEROS]")
+        for nt in sorted(self.no_terminales):
+            print(f"FIRST({nt}): " + '{' + ', '.join(sorted(self.primeros[nt])) + '}')
             
-        print("\n[FOLLOW]")
-        for nt in sorted(self.non_terminals):
-            print(f"FOLLOW({nt}): " + '{' + ', '.join(sorted(self.follow[nt])) + '}')
+        print("\n[SIGUIENTES]")
+        for nt in sorted(self.no_terminales):
+            print(f"FOLLOW({nt}): " + '{' + ', '.join(sorted(self.siguientes[nt])) + '}')
 
-    def print_ll1_table(self):
+    def mostrar_tabla(self):
         print("\n[TABLA LL(1)]")
-        col_terms = self.terminals + ['$']  # Columnas: terminales + $
-        rows = []
+        columnas = self.terminales + ['$']
+        filas = []
         
-        for nt in sorted(self.non_terminals):
-            row = [nt]
-            for t in col_terms:
-                entry = self.table.get((nt, t))
-                if entry:
-                    row.append(' '.join(entry))  # Producción correspondiente
+        for nt in sorted(self.no_terminales):
+            fila = [nt]
+            for t in columnas:
+                entrada = self.tabla.get((nt, t))
+                if entrada:
+                    fila.append(' '.join(entrada))
                 else:
-                    row.append('-')  # Celda vacía
-            rows.append(row)
+                    fila.append('-')
+            filas.append(fila)
             
-        # Imprime tabla formateada
-        print(tabulate(rows, headers=['NT'] + col_terms, tablefmt='fancy_grid'))
+        print(tabulate(filas, headers=['NT'] + columnas, tablefmt='fancy_grid'))
 
-# --- Análisis SLR(1) ---
-def closure(items, productions):
-    # Calcula la clausura de un conjunto de items LR(0)
-    result = set(items)
-    changed = True
+# Nucleo SLR(1)
+
+def clausura(items, reglas):
+    """Calcula la clausura LR(0)"""
+    resultado = set(items)
+    cambio = True
     
-    while changed:
-        changed = False
-        new_items = set()
+    while cambio:
+        cambio = False
+        nuevos_items = set()
         
-        for (nt, rhs, dot) in result:
-            if dot < len(rhs):  # Si el punto no está al final
-                B = rhs[dot]    # Símbolo después del punto
+        for (nt, rhs, punto) in resultado:
+            if punto < len(rhs):
+                B = rhs[punto]
                 
-                if B in productions:  # Si es no-terminal
-                    for prod in productions[B]:
-                        # Agrega items con punto al inicio
+                if B in reglas:
+                    for prod in reglas[B]:
                         item = (B, tuple(prod), 0)
-                        if item not in result:
-                            new_items.add(item)
+                        if item not in resultado:
+                            nuevos_items.add(item)
                             
-        if new_items:
-            result |= new_items
-            changed = True
+        if nuevos_items:
+            resultado |= nuevos_items
+            cambio = True
             
-    return result
+    return resultado
 
-def goto(items, X, productions):
-    # Calcula la función GOTO para un símbolo X
-    moved = set()
+def transicion(items, X, reglas):
+    """Calcula la transicion GOTO"""
+    movidos = set()
     
-    for (nt, rhs, dot) in items:
-        if dot < len(rhs) and rhs[dot] == X:
-            # Mueve el punto después de X
-            moved.add((nt, rhs, dot+1))
+    for (nt, rhs, punto) in items:
+        if punto < len(rhs) and rhs[punto] == X:
+            movidos.add((nt, rhs, punto+1))
             
-    return closure(moved, productions)  # Retorna clausura del resultado
+    return clausura(movidos, reglas)
 
-def build_states(productions, start_symbol):
-    # Aumenta la gramática con un nuevo símbolo inicial
-    augmented = f"{start_symbol}'"
-    while augmented in productions: 
-        augmented += "'"
+def construir_estados(reglas, simbolo_inicial):
+    """Construye el automata LR(0)"""
+    aumentado = f"{simbolo_inicial}'"
+    while aumentado in reglas: 
+        aumentado += "'"
         
-    # Crea gramática aumentada
-    all_prods = {augmented: [[start_symbol]]}
-    all_prods.update(productions)
+    todas_reglas = {aumentado: [[simbolo_inicial]]}
+    todas_reglas.update(reglas)
     
-    # Estado inicial: clausura del item inicial
-    initial = closure({(augmented, tuple(all_prods[augmented][0]), 0)}, all_prods)
-    states = [initial]  # Lista de estados
-    transitions = {}    # Diccionario de transiciones
+    inicial = clausura({(aumentado, tuple(todas_reglas[aumentado][0]), 0)}, todas_reglas)
+    estados = [inicial]
+    transiciones = {}
     
-    # Todos los símbolos (terminales y no-terminales)
-    symbols = set(x for prods in all_prods.values() for prod in prods for x in prod) | set(all_prods.keys())
+    simbolos = set(x for prods in todas_reglas.values() for prod in prods for x in prod) | set(todas_reglas.keys())
     
-    # Construcción de los estados
     while True:
-        new_states = []
+        nuevos_estados = []
         
-        for i, state in enumerate(states):
-            for X in symbols:
-                nxt = goto(state, X, all_prods)
+        for i, estado in enumerate(estados):
+            for X in simbolos:
+                siguiente = transicion(estado, X, todas_reglas)
                 
-                if nxt and nxt not in states and nxt not in new_states:
-                    new_states.append(nxt)
+                if siguiente and siguiente not in estados and siguiente not in nuevos_estados:
+                    nuevos_estados.append(siguiente)
                     
-                if nxt:
-                    # Guarda transición (estado, símbolo) -> nuevo estado
-                    idx = states.index(nxt) if nxt in states else len(states) + new_states.index(nxt)
-                    transitions[(i, X)] = idx
+                if siguiente:
+                    idx = estados.index(siguiente) if siguiente in estados else len(estados) + nuevos_estados.index(siguiente)
+                    transiciones[(i, X)] = idx
                     
-        if not new_states:  # No hay nuevos estados
+        if not nuevos_estados:
             break
             
-        states += new_states  # Agrega nuevos estados
+        estados += nuevos_estados
         
-    return states, transitions, all_prods, augmented
+    return estados, transiciones, todas_reglas, aumentado
 
-def compute_first(productions):
-    # Calcula conjuntos FIRST para SLR (similar a LL(1))
-    first = {nt: set() for nt in productions}
+def calcular_primeros_slr(reglas):
+    """Version SLR de FIRST"""
+    primeros = {nt: set() for nt in reglas}
     
-    for nt in productions:
-        for rhs in productions[nt]:
-            for sym in rhs:
-                if sym not in productions: 
-                    first[sym] = {sym}
+    for nt in reglas:
+        for rhs in reglas[nt]:
+            for simb in rhs:
+                if simb not in reglas: 
+                    primeros[simb] = {simb}
                     
-    changed = True
-    while changed:
-        changed = False
+    cambio = True
+    while cambio:
+        cambio = False
         
-        for nt in productions:
-            for rhs in productions[nt]:
-                i, add_epsilon = 0, True
+        for nt in reglas:
+            for rhs in reglas[nt]:
+                i, epsilon = 0, True
                 
-                while i < len(rhs) and add_epsilon:
-                    sym = rhs[i]
-                    f = first.get(sym, {sym})
+                while i < len(rhs) and epsilon:
+                    simb = rhs[i]
+                    f = primeros.get(simb, {simb})
                     
-                    before = len(first[nt])
-                    first[nt].update(f - {'ε'})
+                    antes = len(primeros[nt])
+                    primeros[nt].update(f - {'ε'})
                     
-                    if len(first[nt]) != before: 
-                        changed = True
+                    if len(primeros[nt]) != antes: 
+                        cambio = True
                         
                     if 'ε' not in f: 
-                        add_epsilon = False
+                        epsilon = False
                     i += 1
                     
-                if add_epsilon:
-                    if 'ε' not in first[nt]: 
-                        first[nt].add('ε')
-                        changed = True
-    return first
+                if epsilon:
+                    if 'ε' not in primeros[nt]: 
+                        primeros[nt].add('ε')
+                        cambio = True
+    return primeros
 
-def compute_follow(productions, first, start_symbol):
-    # Calcula conjuntos FOLLOW para SLR (similar a LL(1))
-    follow = {nt: set() for nt in productions}
-    follow[start_symbol].add('$')
+def calcular_siguientes_slr(reglas, primeros, simbolo_inicial):
+    """Version SLR de FOLLOW"""
+    siguientes = {nt: set() for nt in reglas}
+    siguientes[simbolo_inicial].add('$')
     
-    changed = True
-    while changed:
-        changed = False
+    cambio = True
+    while cambio:
+        cambio = False
         
-        for nt in productions:
-            for rhs in productions[nt]:
-                trailer = follow[nt].copy()
+        for nt in reglas:
+            for rhs in reglas[nt]:
+                trailer = siguientes[nt].copy()
                 
-                for sym in reversed(rhs):
-                    if sym in productions:
-                        before = len(follow[sym])
-                        follow[sym].update(trailer)
+                for simb in reversed(rhs):
+                    if simb in reglas:
+                        antes = len(siguientes[simb])
+                        siguientes[simb].update(trailer)
                         
-                        if len(follow[sym]) != before: 
-                            changed = True
+                        if len(siguientes[simb]) != antes: 
+                            cambio = True
                             
-                        if 'ε' in first[sym]:
-                            trailer = trailer.union(first[sym] - {'ε'})
+                        if 'ε' in primeros[simb]:
+                            trailer = trailer.union(primeros[simb] - {'ε'})
                         else:
-                            trailer = first[sym] - {'ε'}
+                            trailer = primeros[simb] - {'ε'}
                     else:
-                        trailer = {sym}
-    return follow
+                        trailer = {simb}
+    return siguientes
 
-def build_slr_table(productions, start_symbol):
-    # Construye la tabla de análisis SLR
-    states, transitions, all_prods, augmented = build_states(productions, start_symbol)
-    first = compute_first(all_prods)
-    follow = compute_follow(all_prods, first, augmented)
+def construir_tabla_slr(reglas, simbolo_inicial):
+    """Construye tablas ACTION/GOTO SLR"""
+    estados, transiciones, todas_reglas, aumentado = construir_estados(reglas, simbolo_inicial)
+    primeros = calcular_primeros_slr(todas_reglas)
+    siguientes = calcular_siguientes_slr(todas_reglas, primeros, aumentado)
     
-    # Inicializa tablas ACTION y GOTO
-    ACTION = [{} for _ in range(len(states))]
-    GOTO = [{} for _ in range(len(states))]
+    ACTION = [{} for _ in range(len(estados))]
+    GOTO = [{} for _ in range(len(estados))]
     
-    # Mapeo de producciones a índices
-    prod_map = {}
+    mapa_prods = {}
     idx = 0
-    prod_list = []
+    lista_prods = []
     
-    for nt in all_prods:
-        for rhs in all_prods[nt]:
-            prod_map[(nt, tuple(rhs))] = idx
-            prod_list.append((nt, rhs))
+    for nt in todas_reglas:
+        for rhs in todas_reglas[nt]:
+            mapa_prods[(nt, tuple(rhs))] = idx
+            lista_prods.append((nt, rhs))
             idx += 1
             
-    conflicts = []  # Para detectar conflictos
+    conflictos = []
     
-    for i, I in enumerate(states):
+    for i, I in enumerate(estados):
         for item in I:
-            lhs, rhs, dot = item
+            lhs, rhs, punto = item
             
-            if dot < len(rhs):  # Item con punto no al final
-                a = rhs[dot]    # Símbolo después del punto
+            if punto < len(rhs):
+                a = rhs[punto]
                 
-                if a not in all_prods:  # Si es terminal
-                    j = transitions.get((i, a))
+                if a not in todas_reglas:
+                    j = transiciones.get((i, a))
                     
                     if j is not None:
-                        if a in ACTION[i]:  # Conflicto shift-shift
-                            conflicts.append((i, a, 'shift/shift'))
+                        if a in ACTION[i]:
+                            conflictos.append((i, a, 'shift/shift'))
                             
-                        # Acción de desplazamiento
                         ACTION[i][a] = ('s', j)
                         
-            else:  # Item con punto al final
-                if lhs == augmented:  # Item de aceptación
+            else:
+                if lhs == aumentado:
                     ACTION[i]['$'] = ('acc',)
                 else:
-                    prod_idx = prod_map[(lhs, rhs)]
+                    prod_idx = mapa_prods[(lhs, rhs)]
                     
-                    # Para cada terminal en FOLLOW(lhs), agregar reducción
-                    for a in follow[lhs]:
-                        if a in ACTION[i]:  # Conflicto shift-reduce o reduce-reduce
-                            conflicts.append((i, a, 'shift/reduce or reduce/reduce'))
+                    for a in siguientes[lhs]:
+                        if a in ACTION[i]:
+                            conflictos.append((i, a, 'shift/reduce or reduce/reduce'))
                             
                         ACTION[i][a] = ('r', prod_idx)
                         
-        # Llenar tabla GOTO para no-terminales
-        for A in all_prods:
-            if A in all_prods:
-                j = transitions.get((i, A))
+        for A in todas_reglas:
+            if A in todas_reglas:
+                j = transiciones.get((i, A))
                 if j is not None:
                     GOTO[i][A] = j
                     
-    # La gramática es SLR(1) si no hay conflictos
-    is_slr = not conflicts
+    es_slr = not conflictos
     
-    return ACTION, GOTO, prod_list, is_slr, states, all_prods
+    return ACTION, GOTO, lista_prods, es_slr, estados, todas_reglas
 
-def slr_parse(inp, ACTION, GOTO, prod_list, start_symbol):
-    # Analizador SLR
-    tokens = list(inp.strip()) + ['$']  # Prepara entrada
-    stack = [0]  # Pila de estados
-    i = 0        # Índice de entrada
+def analizar_slr(entrada, ACTION, GOTO, lista_prods, simbolo_inicial):
+    """Analizador SLR(1)"""
+    tokens = list(entrada.strip()) + ['$']
+    pila = [0]
+    i = 0
     
     while True:
-        state = stack[-1]  # Estado actual
-        cur = tokens[i]    # Símbolo actual
+        estado = pila[-1]
+        actual = tokens[i]
         
-        # Obtiene acción de la tabla
-        action = ACTION[state].get(cur)
-        if not action:  # Error: no hay acción definida
+        accion = ACTION[estado].get(actual)
+        if not accion:
             return False
             
-        if action[0] == 's':  # Desplazamiento
-            stack.append(cur)     # Empuja símbolo
-            stack.append(action[1])  # Empuja nuevo estado
-            i += 1               # Avanza en la entrada
+        if accion[0] == 's':
+            pila.append(actual)
+            pila.append(accion[1])
+            i += 1
                 
-        elif action[0] == 'r':  # Reducción
-            prod = prod_list[action[1]]  # Producción a reducir
+        elif accion[0] == 'r':
+            prod = lista_prods[accion[1]]
             lhs, rhs = prod
             
-            if rhs != ['ε']:  # Si no es producción epsilon
-                # Desapila 2*|rhs| elementos (símbolos y estados)
+            if rhs != ['ε']:
                 for _ in range(2*len(rhs)):
-                    stack.pop()
+                    pila.pop()
                     
-            state = stack[-1]  # Estado después de desapilar
-            stack.append(lhs)   # Empuja cabeza de producción
-            stack.append(GOTO[state][lhs])  # Empuja nuevo estado según GOTO
+            estado = pila[-1]
+            pila.append(lhs)
+            pila.append(GOTO[estado][lhs])
                 
-        elif action[0] == 'acc':  # Aceptación
+        elif accion[0] == 'acc':
             return True
-        else:  # Error
+        else:
             return False
 
-# --- Impresión de tablas SLR ---
-def print_slr_tables(ACTION, GOTO, prod_list, all_prods):
+# Visualizacion SLR
+
+def mostrar_tablas_slr(ACTION, GOTO, lista_prods, todas_reglas):
+    """Muestra tablas SLR formateadas"""
     print("\n[TABLA ACTION]")
-    # Filtra ε y elimina duplicados en columnas
-    all_syms = sorted(set(sym for a in ACTION for sym in a.keys() if sym != 'ε'))
-    rows = []
+    simbolos = sorted(set(sym for a in ACTION for sym in a.keys() if sym != 'ε'))
+    filas = []
     
     for i, a in enumerate(ACTION):
-        row = [i]
-        for t in all_syms:
+        fila = [i]
+        for t in simbolos:
             act = a.get(t, '')
             
             if not act:
-                row.append('-')
-            elif act[0] == 's':  # Desplazamiento
-                row.append(f"s{act[1]}")
-            elif act[0] == 'r':  # Reducción
-                lhs, rhs = prod_list[act[1]]
+                fila.append('-')
+            elif act[0] == 's':
+                fila.append(f"s{act[1]}")
+            elif act[0] == 'r':
+                lhs, rhs = lista_prods[act[1]]
                 rhs_str = ' '.join(rhs) if rhs != ['ε'] else 'ε'
-                row.append(f"r{act[1]}({lhs}→{rhs_str})")
-            elif act[0] == 'acc':  # Aceptación
-                row.append("acc")
+                fila.append(f"r{act[1]}({lhs}->{rhs_str})")
+            elif act[0] == 'acc':
+                fila.append("acc")
             else:
-                row.append(str(act))
-        rows.append(row)
+                fila.append(str(act))
+        filas.append(fila)
         
-    print(tabulate(rows, headers=['st'] + all_syms, tablefmt='fancy_grid'))
+    print(tabulate(filas, headers=['st'] + simbolos, tablefmt='fancy_grid'))
 
     print("\n[TABLA GOTO]")
-    nts = sorted(nt for nt in all_prods if nt.isupper())  # No-terminales
-    rows = []
+    nts = sorted(nt for nt in todas_reglas if nt.isupper())
+    filas = []
     
     for i, g in enumerate(GOTO):
-        row = [i]
+        fila = [i]
         for nt in nts:
-            row.append(str(g.get(nt,'-')))  # Estado destino o -
-        rows.append(row)
+            fila.append(str(g.get(nt,'-')))
+        filas.append(fila)
         
-    print(tabulate(rows, headers=['st']+nts, tablefmt='fancy_grid'))
+    print(tabulate(filas, headers=['st']+nts, tablefmt='fancy_grid'))
 
-    print("\n[PRODUCCIONES] (índices para reduce)")
-    for i, (lhs, rhs) in enumerate(prod_list):
+    print("\n[PRODUCCIONES]")
+    for i, (lhs, rhs) in enumerate(lista_prods):
         rhs_str = ' '.join(rhs) if rhs != ['ε'] else 'ε'
-        print(f"r{i}: {lhs} → {rhs_str}")
+        print(f"r{i}: {lhs} -> {rhs_str}")
 
-def main():
-    # Punto de entrada principal
-    productions, start = input_grammar()  # Lee gramática
-    
-    # Análisis LL(1)
-    ll1 = GrammarAnalyzerLL1(productions, start)
-    
-    # Análisis SLR(1)
-    ACTION, GOTO, prod_list, is_slr, states, all_prods = build_slr_table(productions, start)
-    is_ll1 = ll1.is_ll1
+# Punto de Entrada
 
-    # Determina tipo de gramática
-    if is_ll1:
-        print("Grammar is LL(1).")
-        parser_type = "LL(1)"
-    elif is_slr:
-        print("Grammar is SLR(1).")
-        parser_type = "SLR(1)"
+def principal():
+    """Funcion principal del programa"""
+    reglas, inicio = leer_gramatica()
+    
+    # Analisis LL(1)
+    ll1 = AnalizadorLL1(reglas, inicio)
+    
+    # Analisis SLR(1)
+    ACTION, GOTO, lista_prods, es_slr, estados, todas_reglas = construir_tabla_slr(reglas, inicio)
+    es_ll1 = ll1.es_ll1
+
+    # Determinar tipo de gramatica
+    if es_ll1:
+        print("Gramatica LL(1)")
+        parser = "LL(1)"
+    elif es_slr:
+        print("Gramatica SLR(1)")
+        parser = "SLR(1)"
         return
     else:
-        print("Grammar is neither LL(1) nor SLR(1).")
+        print("Gramatica no LL(1) ni SLR(1)")
     
-    # Menú interactivo
+    # Menu interactivo
     while True:
-        choice = input("Select a parser (T: for LL(1), B: for SLR(1), Q: quit): ").strip().upper()
+        opcion = input("Seleccione parser (T: LL(1), B: SLR(1), Q: Salir): ").strip().upper()
 
-        if choice == 'Q':
-            print("Assume Q is given.")
+        if opcion == 'Q':
+            print("Saliendo...")
             break
 
-        if choice == 'T':  # Analizador LL(1)
-            if not is_ll1:
-                print("Grammar is not LL(1). Please choose another parser.")
+        if opcion == 'T':
+            if not es_ll1:
+                print("Gramatica no LL(1). Elija otro parser.")
                 continue
             else:
-                print("Using LL(1) parser.")
+                print("Usando parser LL(1)")
                 while True:
                     cadena = input()
                     if cadena == '':
                         break
-                    result = ll1.parse(cadena)
-                    print("yes" if result else "no")
+                    resultado = ll1.analizar(cadena)
+                    print("sí" if resultado else "no")
 
-        elif choice == 'B':  # Analizador SLR(1)
-            if not is_slr:
-                print("Grammar is not SLR(1). Please choose another parser.")
+        elif opcion == 'B':
+            if not es_slr:
+                print("Gramatica no SLR(1). Elija otro parser.")
                 continue
             else:
-                print("Using SLR(1) parser.")
+                print("Usando parser SLR(1)")
                 while True:
                     cadena = input()
                     if cadena == '':
                         break
-                    result = slr_parse(cadena, ACTION, GOTO, prod_list, start)
-                    print("yes" if result else "no")
+                    resultado = analizar_slr(cadena, ACTION, GOTO, lista_prods, inicio)
+                    print("sí" if resultado else "no")
         else:
-            print("Invalid option. Please select T, B or Q.")
+            print("Opcion invalida. Seleccione T, B o Q.")
     
 if __name__ == "__main__":
-    main()
+    principal()
